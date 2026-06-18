@@ -244,7 +244,7 @@ def pin_objects(objects: list[dict[str, Any]], *, include_inner_land: bool) -> l
 def geometry_metrics(pred_objects: list[dict[str, Any]], gt_objects: list[dict[str, Any]]) -> dict[str, Any]:
     pred_boxes = [obj["bbox"] for obj in pred_objects]
     gt_boxes = [obj["bbox"] for obj in gt_objects]
-    transformed_pred_boxes, transform = align_pred_boxes_to_gt(pred_boxes, gt_boxes)
+    transformed_pred_boxes, transform = align_pred_boxes_to_gt_with_quarter_turns(pred_boxes, gt_boxes)
     pairs = match_boxes_by_center(transformed_pred_boxes, gt_boxes)
     center_distances = [center_distance(transformed_pred_boxes[pred_index], gt_boxes[gt_index]) for pred_index, gt_index in pairs]
     pin_ious = [bbox_iou(transformed_pred_boxes[pred_index], gt_boxes[gt_index]) for pred_index, gt_index in pairs]
@@ -270,6 +270,124 @@ def geometry_metrics(pred_objects: list[dict[str, Any]], gt_objects: list[dict[s
         "unmatched_gt_count": max(len(gt_boxes) - len(pairs), 0),
         "alignment_transform": transform,
     }
+
+
+def align_pred_boxes_to_gt_with_quarter_turns(
+    pred_boxes: list[list[float]],
+    gt_boxes: list[list[float]],
+) -> tuple[list[list[float]], dict[str, Any]]:
+    """Align predicted pin boxes to GT physical coordinates.
+
+    Coordinate system: all input and output boxes are axis-aligned
+    [x1, y1, x2, y2] in each stage's physical coordinate units.  The
+    evaluation transform may rotate the predicted layout by 0/90/180/270
+    degrees around its own pin-layout center before the existing frame
+    scale/translate.  A rotated candidate is used only when pin count is
+    unchanged and IoU_IC, d_pin, and IoU_pin are all no worse than the
+    unrotated candidate.
+    """
+    candidates = []
+    for quarter_turns in range(4):
+        rotated_boxes = rotate_boxes_by_quarter_turns(pred_boxes, quarter_turns)
+        transformed_boxes, transform = align_pred_boxes_to_gt(rotated_boxes, gt_boxes)
+        metrics = alignment_candidate_metrics(transformed_boxes, gt_boxes)
+        transform = dict(transform)
+        transform["quarter_turns"] = quarter_turns
+        transform["rotation_degrees"] = quarter_turns * 90
+        candidates.append((transformed_boxes, transform, metrics))
+    if not candidates:
+        return [], {"status": "missing_frame"}
+    best_boxes, best_transform, best_metrics = candidates[0]
+    best_score = alignment_metric_score(best_metrics)
+    for transformed_boxes, transform, metrics in candidates[1:]:
+        if not alignment_metrics_no_worse(metrics, best_metrics):
+            continue
+        score = alignment_metric_score(metrics)
+        if score > best_score:
+            best_boxes = transformed_boxes
+            best_transform = transform
+            best_metrics = metrics
+            best_score = score
+    if best_transform.get("quarter_turns"):
+        best_transform["status"] = "quarter_turn_axis_aligned_frame_scale_translate"
+    return best_boxes, best_transform
+
+
+def rotate_boxes_by_quarter_turns(boxes: list[list[float]], quarter_turns: int) -> list[list[float]]:
+    """Rotate axis-aligned boxes by quarter turns around the union-frame center."""
+    quarter_turns = quarter_turns % 4
+    if quarter_turns == 0:
+        return [list(box) for box in boxes]
+    frame = union_bbox(boxes)
+    if frame is None:
+        return []
+    center_x = (frame[0] + frame[2]) / 2.0
+    center_y = (frame[1] + frame[3]) / 2.0
+    rotated = []
+    for box in boxes:
+        points = ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3]))
+        rotated_points = []
+        for x, y in points:
+            dx = x - center_x
+            dy = y - center_y
+            if quarter_turns == 1:
+                rx, ry = -dy, dx
+            elif quarter_turns == 2:
+                rx, ry = -dx, -dy
+            else:
+                rx, ry = dy, -dx
+            rotated_points.append((center_x + rx, center_y + ry))
+        xs = [point[0] for point in rotated_points]
+        ys = [point[1] for point in rotated_points]
+        rotated.append([min(xs), min(ys), max(xs), max(ys)])
+    return rotated
+
+
+def alignment_candidate_metrics(transformed_pred_boxes: list[list[float]], gt_boxes: list[list[float]]) -> dict[str, Any]:
+    pairs = match_boxes_by_center(transformed_pred_boxes, gt_boxes)
+    center_distances = [center_distance(transformed_pred_boxes[pred_index], gt_boxes[gt_index]) for pred_index, gt_index in pairs]
+    pin_ious = [bbox_iou(transformed_pred_boxes[pred_index], gt_boxes[gt_index]) for pred_index, gt_index in pairs]
+    pin_denominator = max(len(transformed_pred_boxes), len(gt_boxes), 1)
+    return {
+        "iou_ic": union_iou(transformed_pred_boxes, gt_boxes),
+        "d_pin": sum(center_distances) / len(center_distances) if center_distances else None,
+        "iou_pin": sum(pin_ious) / pin_denominator if pin_denominator else None,
+        "matched_pin_count": len(pairs),
+        "pred_pin_count": len(transformed_pred_boxes),
+        "gt_pin_count": len(gt_boxes),
+    }
+
+
+def alignment_metrics_no_worse(candidate: dict[str, Any], base: dict[str, Any]) -> bool:
+    return (
+        metric_no_worse(candidate.get("iou_ic"), base.get("iou_ic"), higher_is_better=True)
+        and metric_no_worse(candidate.get("d_pin"), base.get("d_pin"), higher_is_better=False)
+        and metric_no_worse(candidate.get("iou_pin"), base.get("iou_pin"), higher_is_better=True)
+        and int(candidate.get("pred_pin_count") or 0) == int(base.get("pred_pin_count") or 0)
+        and int(candidate.get("gt_pin_count") or 0) == int(base.get("gt_pin_count") or 0)
+    )
+
+
+def metric_no_worse(candidate: Any, base: Any, *, higher_is_better: bool) -> bool:
+    if not isinstance(candidate, (int, float)):
+        return not isinstance(base, (int, float))
+    if not isinstance(base, (int, float)):
+        return True
+    if higher_is_better:
+        return float(candidate) >= float(base)
+    return float(candidate) <= float(base)
+
+
+def alignment_metric_score(metrics: dict[str, Any]) -> float:
+    score = 0.0
+    for key in ("iou_ic", "iou_pin"):
+        value = metrics.get(key)
+        if isinstance(value, (int, float)):
+            score += float(value)
+    value = metrics.get("d_pin")
+    if isinstance(value, (int, float)):
+        score -= float(value)
+    return score
 
 
 def align_pred_boxes_to_gt(
