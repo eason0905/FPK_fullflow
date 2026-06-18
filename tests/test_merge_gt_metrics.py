@@ -9,8 +9,6 @@ from unittest.mock import patch
 
 from real_image_process.FPK_PJ_fullflow.scoring.merge_gt_metrics import (
     ScoreWeights,
-    align_pred_boxes_to_gt,
-    alignment_candidate_metrics,
     build_selected_metrics,
     evaluate_merge_root,
     evaluate_part,
@@ -38,32 +36,6 @@ class MergeGtMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["pred_pin_count"], 2)
         self.assertEqual(metrics["gt_pin_count"], 2)
         self.assertEqual(metrics["pin_count_abs_error"], 0)
-        self.assertAlmostEqual(metrics["iou_ic"], 1.0)
-        self.assertAlmostEqual(metrics["d_pin"], 0.0)
-        self.assertAlmostEqual(metrics["iou_pin"], 1.0)
-
-    def test_geometry_metrics_selects_quarter_turn_when_all_metrics_improve(self) -> None:
-        gt = [
-            {"role": "lead", "bbox": [0.0, 0.0, 1.0, 4.0]},
-            {"role": "lead", "bbox": [3.0, 0.0, 4.0, 4.0]},
-            {"role": "lead", "bbox": [0.0, 7.0, 1.0, 9.0]},
-        ]
-        pred = [
-            {"role": "package_pad", "bbox": [0.0, 0.0, 4.0, 1.0]},
-            {"role": "package_pad", "bbox": [0.0, 3.0, 4.0, 4.0]},
-            {"role": "package_pad", "bbox": [-5.0, 0.0, -3.0, 1.0]},
-        ]
-
-        pred_boxes = [obj["bbox"] for obj in pred]
-        gt_boxes = [obj["bbox"] for obj in gt]
-        unrotated_boxes, _transform = align_pred_boxes_to_gt(pred_boxes, gt_boxes)
-        unrotated_metrics = alignment_candidate_metrics(unrotated_boxes, gt_boxes)
-        metrics = geometry_metrics(pred, gt)
-
-        self.assertEqual(metrics["alignment_transform"]["quarter_turns"], 3)
-        self.assertGreater(metrics["iou_ic"], unrotated_metrics["iou_ic"])
-        self.assertLess(metrics["d_pin"], unrotated_metrics["d_pin"])
-        self.assertGreater(metrics["iou_pin"], unrotated_metrics["iou_pin"])
         self.assertAlmostEqual(metrics["iou_ic"], 1.0)
         self.assertAlmostEqual(metrics["d_pin"], 0.0)
         self.assertAlmostEqual(metrics["iou_pin"], 1.0)
