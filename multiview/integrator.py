@@ -1512,6 +1512,7 @@ def select_rotation_reference_layer(layers: list[dict[str, Any]]) -> dict[str, A
 
 
 OUTLINE_ROTATION_TIE_TOLERANCE = 1e-9
+MIN_NONZERO_ROTATION_IOU = 0.05
 
 
 def is_outline_rotation_object(obj: dict[str, Any]) -> bool:
@@ -1597,6 +1598,15 @@ def best_multiview_layer_rotation(
             best = candidate
 
     assert best is not None
+    zero_candidate = next((item for item in scores if int(item["rotation_degrees"]) == 0), None)
+    if (
+        int(best["rotation_degrees"]) != 0
+        and best["iou"] < MIN_NONZERO_ROTATION_IOU
+        and zero_candidate is not None
+        and zero_candidate["eligible_by_outline"]
+    ):
+        best = dict(zero_candidate)
+        best["suppressed_low_confidence_rotation"] = True
     return {"rotation_degrees": int(best["rotation_degrees"]), "iou": best["iou"], "scores": scores}
 
 

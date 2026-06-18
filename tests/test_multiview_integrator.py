@@ -739,6 +739,27 @@ class MultiviewIntegratorTests(unittest.TestCase):
         self.assertFalse(candidate_by_rotation[270]["eligible_by_outline"])
         self.assertGreater(candidate_by_rotation[90]["iou"], candidate_by_rotation[0]["iou"])
 
+    def test_multiview_rotation_suppresses_low_confidence_nonzero_rotation(self) -> None:
+        reference = {
+            "objects": [
+                {"role": "land_pad", "bbox": [-0.032527053674, -0.085856579169, 0.032527053674, -0.051101038202]},
+                {"role": "land_pad", "bbox": [-0.032527053674, 0.051101038202, 0.032527053674, 0.085856579169]},
+            ]
+        }
+        candidate = {
+            "objects": [
+                {"role": "package_pad", "bbox": [-0.100913202846, -0.029500220238, -0.084912928816, 0.029500220238]},
+                {"role": "package_pad", "bbox": [0.084912928816, -0.058915552803, 0.100913202846, 0.058915552803]},
+            ]
+        }
+
+        result = best_multiview_layer_rotation(layer_rotation_boxes(reference), reference, candidate)
+
+        self.assertEqual(result["rotation_degrees"], 0)
+        candidate_by_rotation = {item["rotation_degrees"]: item for item in result["scores"]}
+        self.assertGreater(candidate_by_rotation[90]["iou"], candidate_by_rotation[0]["iou"])
+        self.assertLess(candidate_by_rotation[90]["iou"], 0.05)
+
     def test_multiview_overlay_skips_planar_outline_only_layers(self) -> None:
         bottom = toy_graph("PART", "bottom", pad_count=2, outline=False, spacing_value=None)
         top = toy_graph("PART", "top", pad_count=0, outline=True, spacing_value=None)
