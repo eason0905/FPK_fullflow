@@ -290,11 +290,17 @@ def integrate_part(
                 continue
             accepted_dimensions.append(enriched)
 
-    lead_pads = synthesize_lead_pads(package_pads, outline, accepted_dimensions, package_graph)
     land_detail_graphs = [
         graph for graph in ordered if str(graph.get("_raw_view") or graph.get("view") or "").lower() == "land_detail"
     ]
-    inner_land_pads = synthesize_inner_land_pads(land_pads, land_detail_graphs, options)
+    land_detail_inner_land_pads = synthesize_inner_land_pads(land_pads, land_detail_graphs, options)
+    central_inner_land_pads: list[dict[str, Any]] = []
+    if not land_detail_inner_land_pads:
+        package_pads, central_inner_land_pads = split_central_thermal_package_pads(package_pads)
+    lead_pads = synthesize_lead_pads(package_pads, outline, accepted_dimensions, package_graph)
+    inner_land_pads = dedupe_inner_land_pads(
+        sorted(central_inner_land_pads + land_detail_inner_land_pads, key=object_sort_key)
+    )
     multiview_overlay = build_multiview_overlay_payload(ordered, lead_pads, inner_land_pads, options)
     conflicts = detect_conflicts(accepted_dimensions, options)
     match_report = match_package_and_land_pads(package_pads, land_pads)
@@ -1128,6 +1134,76 @@ def filter_oversized_pad_like_outliers(
     if len(filtered) > max_filtered or len(kept) < 4:
         return pads, []
     return sorted(kept, key=object_sort_key), sorted(filtered, key=object_sort_key)
+
+
+def split_central_thermal_package_pads(
+    package_pads: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Move one central oversized pad from base package pads to inner-land evidence.
+
+    Coordinates are reconstructed package-graph coordinates.  This rule is only
+    for dense peripheral terminal layouts where a single large exposed thermal
+    pad sits near the terminal-frame center.  Sparse packages and layouts with
+    multiple large pads remain unchanged.
+    """
+    if len(package_pads) < 24:
+        return package_pads, []
+    measured = []
+    for pad in package_pads:
+        dim = bbox_dimensions(pad)
+        if dim is None:
+            continue
+        width, height = dim
+        if width > 0.0 and height > 0.0:
+            measured.append((pad, width, height, width * height))
+    if len(measured) < 24:
+        return package_pads, []
+    median_width = median_sorted(sorted(item[1] for item in measured))
+    median_height = median_sorted(sorted(item[2] for item in measured))
+    median_area = median_sorted(sorted(item[3] for item in measured))
+    if median_width <= 0.0 or median_height <= 0.0 or median_area <= 0.0:
+        return package_pads, []
+
+    regular = []
+    oversized = []
+    for pad, width, height, area in measured:
+        if area > median_area * 8.0 or width > median_width * 5.0 or height > median_height * 5.0:
+            oversized.append(pad)
+        else:
+            regular.append(pad)
+    if len(oversized) != 1 or len(regular) < 24:
+        return package_pads, []
+
+    regular_centers = [bbox_center(pad) for pad in regular]
+    regular_centers = [center for center in regular_centers if center is not None]
+    if len(regular_centers) < 24:
+        return package_pads, []
+    xs = [center[0] for center in regular_centers]
+    ys = [center[1] for center in regular_centers]
+    terminal_frame = expand_bbox((min(xs), min(ys), max(xs), max(ys)), rel_margin=0.15)
+    oversized_center = bbox_center(oversized[0])
+    if oversized_center is None or not point_in_bbox(oversized_center, terminal_frame):
+        return package_pads, []
+
+    oversized_id = id(oversized[0])
+    kept = []
+    inner_land = []
+    for pad in package_pads:
+        if id(pad) != oversized_id:
+            kept.append(pad)
+            continue
+        source_object_id = pad.get("source_object_id")
+        inner_land.append(
+            dict(
+                pad,
+                role="inner_land_pad",
+                label="inner_land_pad",
+                source_type="reclassified_central_thermal_package_pad",
+                source_package_pad_id=source_object_id,
+                reclassified_reason="central_thermal_package_pad",
+            )
+        )
+    return sorted(kept, key=object_sort_key), sorted(inner_land, key=object_sort_key)
 
 
 def synthesize_lead_pads(

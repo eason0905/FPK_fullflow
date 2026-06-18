@@ -589,6 +589,31 @@ class MultiviewIntegratorTests(unittest.TestCase):
         self.assertEqual(lead_pads[1]["bbox"], [0.9, 0.0, 1.1, 1.5])
         self.assertEqual(lead_pads[5]["bbox"], [0.9, 8.5, 1.1, 10.0])
 
+    def test_dense_central_thermal_pad_is_optional_inner_land_pad(self) -> None:
+        bottom = toy_graph("PART", "bottom", pad_count=0, outline=True, spacing_value=None)
+        bottom["objects"] = [
+            {"id": 100, "label": "outline", "source_label": "outline", "bbox_reconstructed": [-5.0, -5.0, 5.0, 5.0]},
+        ]
+        object_id = 0
+        for x in [-4.0, -2.4, -0.8, 0.8, 2.4, 4.0]:
+            bottom["objects"].append(rect_pad_object(object_id, [x - 0.2, -4.4, x + 0.2, -4.0]))
+            object_id += 1
+            bottom["objects"].append(rect_pad_object(object_id, [x - 0.2, 4.0, x + 0.2, 4.4]))
+            object_id += 1
+        for y in [-3.2, -1.9, -0.6, 0.6, 1.9, 3.2]:
+            bottom["objects"].append(rect_pad_object(object_id, [-4.4, y - 0.2, -4.0, y + 0.2]))
+            object_id += 1
+            bottom["objects"].append(rect_pad_object(object_id, [4.0, y - 0.2, 4.4, y + 0.2]))
+            object_id += 1
+        bottom["objects"].append(rect_pad_object(999, [-2.0, -2.0, 2.0, 2.0]))
+
+        canonical = integrate_part("PART", [bottom], MultiviewOptions())
+
+        self.assertEqual(len(canonical["package_pads"]), 24)
+        self.assertEqual(len(canonical["inner_land_pads"]), 1)
+        self.assertEqual(canonical["inner_land_pads"][0]["source_object_id"], 999)
+        self.assertEqual(canonical["inner_land_pads"][0]["reclassified_reason"], "central_thermal_package_pad")
+
     def test_lead_detail_uses_row_axis_for_top_bottom_corner_pads(self) -> None:
         bottom = toy_graph("PART", "bottom", pad_count=0, outline=True, spacing_value=None)
         bottom["objects"] = [
