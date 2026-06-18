@@ -183,8 +183,8 @@ def evaluate_part(
     gt_objects = load_gt_pin_objects(scan_path)
     base_pred = pin_objects(pred_objects, include_inner_land=False)
     inner_pred = pin_objects(pred_objects, include_inner_land=True)
-    base_metrics = geometry_metrics(base_pred, gt_objects)
-    inner_metrics = geometry_metrics(inner_pred, gt_objects)
+    base_metrics = geometry_metrics(base_pred, gt_objects, weights=weights)
+    inner_metrics = geometry_metrics(inner_pred, gt_objects, weights=weights)
     metric_selection = select_inner_land_by_metric(base_metrics, inner_metrics)
     selected_metrics = build_selected_metrics(base_metrics, inner_metrics, metric_selection)
     score_payload = weighted_score(selected_metrics, weights)
@@ -241,9 +241,58 @@ def pin_objects(objects: list[dict[str, Any]], *, include_inner_land: bool) -> l
     return result
 
 
-def geometry_metrics(pred_objects: list[dict[str, Any]], gt_objects: list[dict[str, Any]]) -> dict[str, Any]:
+def geometry_metrics(
+    pred_objects: list[dict[str, Any]],
+    gt_objects: list[dict[str, Any]],
+    *,
+    weights: ScoreWeights | None = None,
+) -> dict[str, Any]:
+    """Score predicted pins against GT using the best right-angle result rotation.
+
+    Coordinate system: both inputs are 2D axis-aligned boxes in their own local
+    units.  This scoring-only rotation does not modify upstream graph outputs.
+    For each 0/90/180/270 degree rotation of the full predicted layout, the
+    rotated prediction is scaled/transformed to the GT frame and scored; the
+    highest weighted score is returned.
+    """
+    weights = weights or ScoreWeights()
     pred_boxes = [obj["bbox"] for obj in pred_objects]
     gt_boxes = [obj["bbox"] for obj in gt_objects]
+    candidates = []
+    for rotation_degrees in (0, 90, 180, 270):
+        rotated_pred_boxes = rotate_boxes_for_scoring(pred_boxes, rotation_degrees)
+        metrics = geometry_metrics_for_boxes(rotated_pred_boxes, gt_boxes)
+        score_payload = weighted_score(metrics, weights)
+        metrics["scoring_rotation_degrees"] = rotation_degrees
+        metrics["scoring_rotation_weighted_score"] = score_payload["weighted_score"]
+        candidates.append(metrics)
+    best = max(candidates, key=scoring_rotation_sort_key)
+    best = dict(best)
+    best["scoring_rotation_candidates"] = [
+        {
+            "rotation_degrees": item["scoring_rotation_degrees"],
+            "weighted_score": item["scoring_rotation_weighted_score"],
+            "iou_ic": item["iou_ic"],
+            "d_pin": item["d_pin"],
+            "d_pin_normalized": item["d_pin_normalized"],
+            "iou_pin": item["iou_pin"],
+            "pred_pin_count": item["pred_pin_count"],
+            "gt_pin_count": item["gt_pin_count"],
+        }
+        for item in candidates
+    ]
+    return best
+
+
+def scoring_rotation_sort_key(metrics: dict[str, Any]) -> tuple[float, int, int]:
+    score = metrics.get("scoring_rotation_weighted_score")
+    score_value = float(score) if isinstance(score, (int, float)) else -1.0
+    rotation = int(metrics.get("scoring_rotation_degrees") or 0)
+    turn_count = min((rotation % 360) // 90, ((360 - rotation) % 360) // 90)
+    return (score_value, -turn_count, -rotation)
+
+
+def geometry_metrics_for_boxes(pred_boxes: list[list[float]], gt_boxes: list[list[float]]) -> dict[str, Any]:
     transformed_pred_boxes, transform = align_pred_boxes_to_gt(pred_boxes, gt_boxes)
     pairs = match_boxes_by_center(transformed_pred_boxes, gt_boxes)
     center_distances = [center_distance(transformed_pred_boxes[pred_index], gt_boxes[gt_index]) for pred_index, gt_index in pairs]
@@ -270,6 +319,40 @@ def geometry_metrics(pred_objects: list[dict[str, Any]], gt_objects: list[dict[s
         "unmatched_gt_count": max(len(gt_boxes) - len(pairs), 0),
         "alignment_transform": transform,
     }
+
+
+def rotate_boxes_for_scoring(boxes: list[list[float]], rotation_degrees: int) -> list[list[float]]:
+    frame = union_bbox(boxes)
+    if frame is None:
+        return []
+    cx = (frame[0] + frame[2]) / 2.0
+    cy = (frame[1] + frame[3]) / 2.0
+    return [rotate_box_around_point(box, rotation_degrees, cx, cy) for box in boxes]
+
+
+def rotate_box_around_point(box: list[float], rotation_degrees: int, cx: float, cy: float) -> list[float]:
+    points = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
+    rotated = [rotate_point_around_point(x, y, rotation_degrees, cx, cy) for x, y in points]
+    xs = [point[0] for point in rotated]
+    ys = [point[1] for point in rotated]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def rotate_point_around_point(x: float, y: float, rotation_degrees: int, cx: float, cy: float) -> tuple[float, float]:
+    dx = x - cx
+    dy = y - cy
+    rotation = rotation_degrees % 360
+    if rotation == 0:
+        rx, ry = dx, dy
+    elif rotation == 90:
+        rx, ry = -dy, dx
+    elif rotation == 180:
+        rx, ry = -dx, -dy
+    elif rotation == 270:
+        rx, ry = dy, -dx
+    else:
+        raise ValueError(f"unsupported scoring rotation: {rotation_degrees}")
+    return cx + rx, cy + ry
 
 
 def align_pred_boxes_to_gt(

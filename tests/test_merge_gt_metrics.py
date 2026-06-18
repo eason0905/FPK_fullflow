@@ -39,6 +39,28 @@ class MergeGtMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["iou_ic"], 1.0)
         self.assertAlmostEqual(metrics["d_pin"], 0.0)
         self.assertAlmostEqual(metrics["iou_pin"], 1.0)
+        self.assertEqual(metrics["scoring_rotation_degrees"], 0)
+
+    def test_geometry_metrics_finds_best_right_angle_scoring_rotation(self) -> None:
+        pred = [
+            {"role": "land_pad", "bbox": [0.0, 0.0, 1.0, 1.0]},
+            {"role": "land_pad", "bbox": [0.0, 2.0, 1.0, 3.0]},
+        ]
+        gt = [
+            {"role": "land", "bbox": [0.0, 0.0, 1.0, 1.0]},
+            {"role": "land", "bbox": [2.0, 0.0, 3.0, 1.0]},
+        ]
+
+        metrics = geometry_metrics(pred, gt)
+
+        self.assertIn(metrics["scoring_rotation_degrees"], {90, 270})
+        self.assertAlmostEqual(metrics["iou_ic"], 1.0)
+        self.assertAlmostEqual(metrics["d_pin"], 0.0)
+        self.assertAlmostEqual(metrics["iou_pin"], 1.0)
+        candidate_by_rotation = {
+            item["rotation_degrees"]: item for item in metrics["scoring_rotation_candidates"]
+        }
+        self.assertLess(candidate_by_rotation[0]["weighted_score"], candidate_by_rotation[90]["weighted_score"])
 
     def test_evaluate_part_includes_inner_land_when_it_improves_score(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
