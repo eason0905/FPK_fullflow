@@ -1658,6 +1658,10 @@ def select_rotation_reference_layer(
 
 
 OUTLINE_ROTATION_TIE_TOLERANCE = 1e-9
+# Rotation selection is pad-layout-first.  Outline is a guard against obviously
+# wrong turns, but minor outline IoU jitter must not reject a much better pad
+# alignment candidate.  Coordinates are dimension-scaled package units.
+OUTLINE_ROTATION_NEAR_TIE_TOLERANCE = 0.02
 MIN_NONZERO_ROTATION_IOU = 0.05
 
 
@@ -1717,7 +1721,9 @@ def best_multiview_layer_rotation(
         allowed_rotations = tuple(
             rotation
             for rotation, score in outline_scores.items()
-            if score is not None and abs(float(score) - best_outline_iou) <= OUTLINE_ROTATION_TIE_TOLERANCE
+            if score is not None
+            and abs(float(score) - best_outline_iou)
+            <= max(OUTLINE_ROTATION_TIE_TOLERANCE, OUTLINE_ROTATION_NEAR_TIE_TOLERANCE)
         )
         if not allowed_rotations:
             allowed_rotations = (0, 90, 180, 270)

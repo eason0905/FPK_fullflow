@@ -861,6 +861,31 @@ class MultiviewIntegratorTests(unittest.TestCase):
         self.assertFalse(candidate_by_rotation[270]["eligible_by_outline"])
         self.assertGreater(candidate_by_rotation[90]["iou"], candidate_by_rotation[0]["iou"])
 
+    def test_multiview_rotation_keeps_pad_layout_when_outline_is_near_tie(self) -> None:
+        reference = {
+            "objects": [
+                {"role": "outline_2d", "bbox": [-6.80180348307, -8.14945902817, 6.79819603389, 8.1505384041]},
+                {"role": "land_pad", "bbox": [5.10276832637, -7.91323965623, 5.776857958154, -5.975732543195]},
+                {"role": "land_pad", "bbox": [5.102139120118, 5.984763777209, 5.776228751901, 7.922270890243]},
+            ]
+        }
+        candidate = {
+            "objects": [
+                {"role": "outline_2d", "bbox": [-6.748009998713, -5.993196167039, 6.851992033578, 6.006793912167]},
+                {"role": "package_pad", "bbox": [5.19912093167, -7.51196431447, 5.666857798595, -6.007293829268]},
+                {"role": "package_pad", "bbox": [5.199082554835, 6.007293829268, 5.66681942176, 7.51196431447]},
+            ]
+        }
+
+        result = best_multiview_layer_rotation(layer_rotation_boxes(reference), reference, candidate)
+
+        self.assertEqual(result["rotation_degrees"], 0)
+        candidate_by_rotation = {item["rotation_degrees"]: item for item in result["scores"]}
+        self.assertGreater(candidate_by_rotation[90]["outline_iou"], candidate_by_rotation[0]["outline_iou"])
+        self.assertGreater(candidate_by_rotation[0]["iou"], candidate_by_rotation[90]["iou"])
+        self.assertTrue(candidate_by_rotation[0]["eligible_by_outline"])
+        self.assertTrue(candidate_by_rotation[90]["eligible_by_outline"])
+
     def test_multiview_rotation_suppresses_low_confidence_nonzero_rotation(self) -> None:
         reference = {
             "objects": [
