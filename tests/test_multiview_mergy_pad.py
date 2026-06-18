@@ -5,7 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tmp.multiview_mergy_pad import build_mergy_pad_payload, build_multiview_mergy_pad
+from real_image_process.FPK_PJ_fullflow.multiview.merge_pads import (
+    build_mergy_pad_payload,
+    build_multiview_mergy_pad,
+)
 
 
 class MultiviewMergyPadTests(unittest.TestCase):
@@ -127,6 +130,49 @@ class MultiviewMergyPadTests(unittest.TestCase):
         self.assertEqual([obj["role"] for obj in result["objects"]], ["unmerged_pad", "unmerged_pad"])
         self.assertNotIn("members", result["unmerged_pads"][0])
 
+    def test_eight_front_partial_width_pads_use_square_width_fallback(self) -> None:
+        payload = aligned_payload(
+            [
+                lead_pad(
+                    index,
+                    "front",
+                    "graph",
+                    index,
+                    [index * 10.0, 0.0, index * 10.0 + 2.0, 8.0],
+                    role="partial_pad_width",
+                )
+                for index in range(8)
+            ]
+        )
+
+        result = build_mergy_pad_payload(payload, part_number="PART")
+
+        self.assertEqual(result["merged_pad_count"], 0)
+        self.assertEqual(result["unmerged_pad_count"], 8)
+        for index, pad in enumerate(result["unmerged_pads"]):
+            self.assertEqual(pad["bbox"], [index * 10.0, 3.0, index * 10.0 + 2.0, 5.0])
+            self.assertEqual(pad["original_unmerged_bbox"], [index * 10.0, 0.0, index * 10.0 + 2.0, 8.0])
+            self.assertEqual(pad["merge_policy"], "unmerged_front_width_square_fallback")
+            self.assertEqual(pad["fallback_reason"], "eight_pin_front_only_partial_pad_width")
+        self.assertEqual(
+            sorted(obj["bbox"] for obj in result["objects"]),
+            [[index * 10.0, 3.0, index * 10.0 + 2.0, 5.0] for index in range(8)],
+        )
+
+    def test_two_front_partial_width_pads_keep_original_height(self) -> None:
+        payload = aligned_payload(
+            [
+                lead_pad(1, "front", "graph", 1, [0.0, 0.0, 2.0, 8.0], role="partial_pad_width"),
+                lead_pad(2, "front", "graph", 2, [10.0, 0.0, 12.0, 8.0], role="partial_pad_width"),
+            ]
+        )
+
+        result = build_mergy_pad_payload(payload, part_number="PART")
+
+        self.assertEqual(result["unmerged_pads"][0]["bbox"], [0.0, 0.0, 2.0, 8.0])
+        self.assertEqual(result["unmerged_pads"][0]["merge_policy"], "unmerged")
+        self.assertNotIn("fallback_reason", result["unmerged_pads"][0])
+
     def test_different_package_pad_ids_are_not_merged_together(self) -> None:
         payload = aligned_payload(
             [
@@ -215,10 +261,12 @@ def lead_pad(
     graph: str,
     source_package_pad_id: int,
     bbox: list[float],
+    *,
+    role: str = "lead_pad",
 ) -> dict[str, object]:
     return {
         "source_object_id": source_object_id,
-        "role": "lead_pad",
+        "role": role,
         "bbox": bbox,
         "raw_view": view,
         "canonical_view": "lateral" if view in {"front", "side"} else view,

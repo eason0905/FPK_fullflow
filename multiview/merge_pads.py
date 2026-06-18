@@ -101,6 +101,8 @@ def build_mergy_pad_payload(
                 unmerged.append(unmerged_pad(key, source, len(unmerged), "invalid_merge_bbox"))
             continue
         merged.append(merged_pad(key, bbox, len(merged), policy))
+    if not merged:
+        apply_eight_pin_front_partial_width_fallback(unmerged)
     merge_graph_objects = build_merge_graph_objects(objects, merged, unmerged)
     return {
         "part_number": part_number,
@@ -304,6 +306,40 @@ def unmerged_pad(
         "merge_policy": "unmerged",
         "unmerged_reason": reason,
     }
+
+
+def apply_eight_pin_front_partial_width_fallback(unmerged_pads: list[dict[str, Any]]) -> None:
+    """Narrow fallback for 8-pin front-only width evidence.
+
+    Coordinate system: input/output bboxes are already in aligned multiview
+    dimension-scaled coordinates.  The fallback only changes the derived
+    unmerged pad geometry; it keeps each pad center fixed and uses the front
+    width as both x and y extent when no side/lead length evidence exists.
+    """
+    if len(unmerged_pads) != 8:
+        return
+    candidates = []
+    for pad in unmerged_pads:
+        if str(pad.get("source_role") or "") != "partial_pad_width":
+            return
+        if str(pad.get("source_view") or "") != "front":
+            return
+        bbox = pad.get("bbox") or []
+        if not valid_bbox(bbox):
+            return
+        width = float(bbox[2]) - float(bbox[0])
+        height = float(bbox[3]) - float(bbox[1])
+        if width <= 0.0 or height <= 0.0:
+            return
+        if height <= width * 1.5:
+            return
+        candidates.append((pad, list(map(float, bbox)), width))
+    for pad, bbox, width in candidates:
+        cy = (bbox[1] + bbox[3]) / 2.0
+        pad["original_unmerged_bbox"] = clean_bbox(bbox)
+        pad["bbox"] = clean_bbox([bbox[0], cy - width / 2.0, bbox[2], cy + width / 2.0])
+        pad["merge_policy"] = "unmerged_front_width_square_fallback"
+        pad["fallback_reason"] = "eight_pin_front_only_partial_pad_width"
 
 
 def source_x_source_y_bbox(x_source_bbox: list[float], y_source_bbox: list[float]) -> list[float] | None:
