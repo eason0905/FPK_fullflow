@@ -1167,6 +1167,10 @@ def synthesize_lead_pads(
     terminal_pads = terminal_package_pads_for_lead_synthesis(package_pads)
     left_right_only_layout = has_left_right_only_terminal_layout(terminal_pads, outline_bbox)
     terminal_band_layout = terminal_pad_band_layout(terminal_pads)
+    contact_dimensions = select_lead_partial_dimensions_for_terminal_layout(
+        contact_dimensions,
+        terminal_band_layout=terminal_band_layout,
+    )
     uniform_cross_axis_length = uniform_perimeter_terminal_cross_axis_length(
         terminal_pads,
         outline_bbox,
@@ -1274,6 +1278,41 @@ def synthesize_lead_pads(
                 }
             )
     return sorted(dedupe_objects_by_bbox(lead_pads), key=object_sort_key)
+
+
+def select_lead_partial_dimensions_for_terminal_layout(
+    dimensions: list[dict[str, Any]],
+    *,
+    terminal_band_layout: str,
+) -> list[dict[str, Any]]:
+    """Select unambiguous lateral partial dimensions for a terminal layout.
+
+    Coordinates are not modified here.  For two-row packages, front-view
+    left/right pad-width dimensions describe the terminal width along the row.
+    When the same front graph supplies multiple accepted widths, keep the
+    narrowest one before pad synthesis so concentric bbox merging cannot
+    promote the terminal width to a wider body/lead-bend dimension.
+    """
+    if terminal_band_layout != "top_bottom_rows":
+        return dimensions
+    best_by_source: dict[tuple[str, str], tuple[float, int, dict[str, Any]]] = {}
+    passthrough: list[tuple[int, dict[str, Any]]] = []
+    for index, dim in enumerate(dimensions):
+        raw_view = str(dim.get("raw_view") or "").strip().lower()
+        semantics = str(dim.get("overlay_semantics") or "")
+        if raw_view != "front" or semantics != "pad_width":
+            passthrough.append((index, dim))
+            continue
+        value = numeric(dim.get("value"))
+        if value is None or value <= 0:
+            passthrough.append((index, dim))
+            continue
+        key = (str(dim.get("source_graph") or ""), semantics)
+        current = best_by_source.get(key)
+        if current is None or (value, index) < (current[0], current[1]):
+            best_by_source[key] = (value, index, dim)
+    selected = passthrough + [(index, dim) for _value, index, dim in best_by_source.values()]
+    return [dim for _index, dim in sorted(selected, key=lambda item: item[0])]
 
 
 def synthesize_inner_land_pads(

@@ -538,6 +538,57 @@ class MultiviewIntegratorTests(unittest.TestCase):
         self.assertEqual(lead_pads[11]["bbox"], [0.9, 8.5, 1.1, 10.0])
         self.assertEqual(lead_pads[20]["bbox"], [18.9, 8.5, 19.1, 10.0])
 
+    def test_front_pad_width_top_bottom_rows_prefers_narrow_terminal_dimension(self) -> None:
+        bottom = toy_graph("PART", "bottom", pad_count=0, outline=True, spacing_value=None)
+        bottom["objects"] = [
+            {"id": 100, "label": "outline", "source_label": "outline", "bbox_reconstructed": [0.0, 0.0, 20.0, 10.0]},
+        ]
+        for index, x in enumerate([1.0, 3.0, 5.0, 7.0], start=1):
+            bottom["objects"].append(rect_pad_object(index, [x - 0.25, 0.0, x + 0.25, 1.5]))
+        for index, x in enumerate([1.0, 3.0, 5.0, 7.0], start=5):
+            bottom["objects"].append(rect_pad_object(index, [x - 0.25, 8.5, x + 0.25, 10.0]))
+        bottom["metrics"] = {"axis_scale_x": 1.0, "axis_scale_y": 1.0}
+        front = toy_graph("PART", "front", pad_count=0, outline=False, spacing_value=None)
+        front["objects"] = [
+            rect_pad_object(30, [0.0, 0.0, 1.0, 1.0]),
+            rect_pad_object(31, [2.0, 0.0, 3.0, 1.0]),
+        ]
+        front["dimensions"] = [
+            {
+                "id": 40,
+                "dimension_id": 40,
+                "text": "terminal",
+                "kind": "size",
+                "axis": "x",
+                "target_ids": [30],
+                "anchors": ["left_edge", "right_edge"],
+                "value": 0.2,
+                "status": "accepted",
+                "value_source": "text_parser",
+            },
+            {
+                "id": 41,
+                "dimension_id": 41,
+                "text": "body lead bend",
+                "kind": "size",
+                "axis": "x",
+                "target_ids": [31],
+                "anchors": ["left_edge", "right_edge"],
+                "value": 0.6,
+                "status": "accepted",
+                "value_source": "text_parser",
+            },
+        ]
+
+        canonical = integrate_part("PART", [bottom, front], MultiviewOptions())
+        lead_pads = {pad["source_package_pad_id"]: pad for pad in canonical["lead_pads"]}
+
+        self.assertEqual(len(lead_pads), 8)
+        self.assertEqual({pad["lead_contact_length"] for pad in lead_pads.values()}, {0.2})
+        self.assertEqual({pad["lead_contact_length_source"]["dimension_id"] for pad in lead_pads.values()}, {40})
+        self.assertEqual(lead_pads[1]["bbox"], [0.9, 0.0, 1.1, 1.5])
+        self.assertEqual(lead_pads[5]["bbox"], [0.9, 8.5, 1.1, 10.0])
+
     def test_lead_detail_uses_row_axis_for_top_bottom_corner_pads(self) -> None:
         bottom = toy_graph("PART", "bottom", pad_count=0, outline=True, spacing_value=None)
         bottom["objects"] = [
