@@ -15,6 +15,7 @@ from real_image_process.FPK_PJ_fullflow.multiview.integrator import (
     layer_rotation_boxes,
     match_package_and_land_pads,
     normalize_view,
+    select_rotation_reference_layer,
     write_source_overlays,
     write_svg,
 )
@@ -759,6 +760,33 @@ class MultiviewIntegratorTests(unittest.TestCase):
         candidate_by_rotation = {item["rotation_degrees"]: item for item in result["scores"]}
         self.assertGreater(candidate_by_rotation[90]["iou"], candidate_by_rotation[0]["iou"])
         self.assertLess(candidate_by_rotation[90]["iou"], 0.05)
+
+    def test_multiview_rotation_prefers_top_anchor_only_for_top_land_source_views(self) -> None:
+        top = {
+            "raw_view": "top",
+            "graph_path": "top.package_graph.json",
+            "normalized_frame": [-3.0, -1.0, 3.0, 1.0],
+            "objects": [
+                {"role": "outline_2d", "bbox": [-3.0, -1.0, 3.0, 1.0]},
+                {"role": "package_pad", "bbox": [-3.5, -0.5, -2.5, 0.5]},
+                {"role": "package_pad", "bbox": [2.5, -0.5, 3.5, 0.5]},
+            ],
+        }
+        land = {
+            "raw_view": "land",
+            "graph_path": "land.package_graph.json",
+            "normalized_frame": [-0.5, -3.5, 0.5, 3.5],
+            "objects": [
+                {"role": "land_pad", "bbox": [-0.5, -3.5, 0.5, -2.5]},
+                {"role": "land_pad", "bbox": [-0.5, 2.5, 0.5, 3.5]},
+            ],
+        }
+
+        top_land_reference = select_rotation_reference_layer([land, top], source_views={"top", "land"})
+        with_side_reference = select_rotation_reference_layer([land, top], source_views={"top", "land", "side"})
+
+        self.assertIs(top_land_reference, top)
+        self.assertIs(with_side_reference, land)
 
     def test_multiview_overlay_skips_planar_outline_only_layers(self) -> None:
         bottom = toy_graph("PART", "bottom", pad_count=2, outline=False, spacing_value=None)

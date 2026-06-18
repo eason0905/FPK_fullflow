@@ -1371,7 +1371,8 @@ def build_multiview_overlay_payload(
         if normalized is not None:
             extra_objects.append(normalized)
 
-    rotation_summary = normalize_multiview_overlay_layer_rotations(layers, extra_objects)
+    source_views = {str(graph.get("_raw_view") or graph.get("view") or "").strip().lower() for graph in graphs}
+    rotation_summary = normalize_multiview_overlay_layer_rotations(layers, extra_objects, source_views=source_views)
 
     frames = [
         tuple(layer["normalized_frame"])
@@ -1430,8 +1431,10 @@ def multiview_overlay_layer_from_graph(
 def normalize_multiview_overlay_layer_rotations(
     layers: list[dict[str, Any]],
     extra_objects: list[dict[str, Any]],
+    *,
+    source_views: set[str] | None = None,
 ) -> dict[str, Any]:
-    reference = select_rotation_reference_layer(layers)
+    reference = select_rotation_reference_layer(layers, source_views=source_views)
     if reference is None:
         return {
             "status": "missing_reference_layer",
@@ -1496,11 +1499,38 @@ def normalize_multiview_overlay_layer_rotations(
     }
 
 
-def select_rotation_reference_layer(layers: list[dict[str, Any]]) -> dict[str, Any] | None:
+def is_top_package_rotation_anchor(layer: dict[str, Any]) -> bool:
+    if str(layer.get("raw_view") or "") != "top":
+        return False
+    has_outline = False
+    has_package_pad = False
+    for obj in layer.get("objects") or []:
+        if is_outline_rotation_object(obj):
+            has_outline = True
+        if str(obj.get("role") or "") == "package_pad":
+            has_package_pad = True
+    return has_outline and has_package_pad
+
+
+def select_rotation_reference_layer(
+    layers: list[dict[str, Any]],
+    *,
+    source_views: set[str] | None = None,
+) -> dict[str, Any] | None:
     preferred = {"land": 0, "bottom": 1, "top": 2}
     candidates = [layer for layer in layers if len(layer.get("normalized_frame") or []) >= 4]
     if not candidates:
         return None
+    if source_views == {"top", "land"}:
+        top_package_candidates = [layer for layer in candidates if is_top_package_rotation_anchor(layer)]
+        if top_package_candidates:
+            return min(
+                top_package_candidates,
+                key=lambda layer: (
+                    -len(layer.get("objects") or []),
+                    str(layer.get("graph_path") or ""),
+                ),
+            )
     return min(
         candidates,
         key=lambda layer: (
