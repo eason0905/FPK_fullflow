@@ -1663,6 +1663,7 @@ OUTLINE_ROTATION_TIE_TOLERANCE = 1e-9
 # alignment candidate.  Coordinates are dimension-scaled package units.
 OUTLINE_ROTATION_NEAR_TIE_TOLERANCE = 0.02
 MIN_NONZERO_ROTATION_IOU = 0.05
+ROTATION_IOU_EPSILON = 1e-12
 
 
 def is_outline_rotation_object(obj: dict[str, Any]) -> bool:
@@ -1756,6 +1757,7 @@ def best_multiview_layer_rotation(
         and best["iou"] < MIN_NONZERO_ROTATION_IOU
         and zero_candidate is not None
         and zero_candidate["eligible_by_outline"]
+        and zero_candidate["iou"] > ROTATION_IOU_EPSILON
     ):
         best = dict(zero_candidate)
         best["suppressed_low_confidence_rotation"] = True

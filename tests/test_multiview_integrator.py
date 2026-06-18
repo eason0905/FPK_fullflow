@@ -886,7 +886,7 @@ class MultiviewIntegratorTests(unittest.TestCase):
         self.assertTrue(candidate_by_rotation[0]["eligible_by_outline"])
         self.assertTrue(candidate_by_rotation[90]["eligible_by_outline"])
 
-    def test_multiview_rotation_suppresses_low_confidence_nonzero_rotation(self) -> None:
+    def test_multiview_rotation_accepts_low_confidence_nonzero_when_zero_has_no_overlap(self) -> None:
         reference = {
             "objects": [
                 {"role": "land_pad", "bbox": [-0.032527053674, -0.085856579169, 0.032527053674, -0.051101038202]},
@@ -902,8 +902,32 @@ class MultiviewIntegratorTests(unittest.TestCase):
 
         result = best_multiview_layer_rotation(layer_rotation_boxes(reference), reference, candidate)
 
+        self.assertEqual(result["rotation_degrees"], 90)
+        candidate_by_rotation = {item["rotation_degrees"]: item for item in result["scores"]}
+        self.assertEqual(candidate_by_rotation[0]["iou"], 0.0)
+        self.assertGreater(candidate_by_rotation[90]["iou"], candidate_by_rotation[0]["iou"])
+        self.assertLess(candidate_by_rotation[90]["iou"], 0.05)
+
+    def test_multiview_rotation_suppresses_low_confidence_nonzero_when_zero_has_overlap(self) -> None:
+        reference = {
+            "objects": [
+                {"role": "land_pad", "bbox": [-0.0325, -0.0858, 0.0325, -0.0511]},
+                {"role": "land_pad", "bbox": [-0.0325, 0.0511, 0.0325, 0.0858]},
+            ]
+        }
+        candidate = {
+            "objects": [
+                {"role": "package_pad", "bbox": [-0.1009, -0.0295, -0.0849, 0.0295]},
+                {"role": "package_pad", "bbox": [0.0849, -0.0589, 0.1009, 0.0589]},
+                {"role": "package_pad", "bbox": [-0.0325, -0.0858, -0.0315, -0.0511]},
+            ]
+        }
+
+        result = best_multiview_layer_rotation(layer_rotation_boxes(reference), reference, candidate)
+
         self.assertEqual(result["rotation_degrees"], 0)
         candidate_by_rotation = {item["rotation_degrees"]: item for item in result["scores"]}
+        self.assertGreater(candidate_by_rotation[0]["iou"], 0.0)
         self.assertGreater(candidate_by_rotation[90]["iou"], candidate_by_rotation[0]["iou"])
         self.assertLess(candidate_by_rotation[90]["iou"], 0.05)
 
