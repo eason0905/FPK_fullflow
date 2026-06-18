@@ -1,0 +1,13 @@
+path: /tmp/tmp3hul430b/yolo
+train: images/train
+val: images/val
+nc: 7
+
+names:
+  0: lead
+  1: outline
+  2: package
+  3: pad
+  4: pad_circle
+  5: pad_dshape
+  6: num_group

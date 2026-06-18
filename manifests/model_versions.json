@@ -1,0 +1,21 @@
+{
+  "active": "qwen3_5_9b_v4_task12345",
+  "models": {
+    "qwen3_5_9b": {
+      "source_path": "models/Qwen3.5-9B",
+      "asset_path": "real_image_process/FPK_PJ_fullflow/assets/models/Qwen3.5-9B",
+      "notes": "Base model used by the v4 Qwen3.5-9B LoRA training run."
+    }
+  },
+  "adapters": {
+    "qwen3_5_9b_v4_task12345": {
+      "source_path": "saves/qwen3.5-9b/lora/real-task12345-sft-split-20260524-v4-px2400-cutoff8192",
+      "asset_path": "real_image_process/FPK_PJ_fullflow/assets/adapters/real-task12345-sft-split-20260524-v4-px2400-cutoff8192",
+      "base_model": "qwen3_5_9b",
+      "dataset_version": "v4",
+      "final_checkpoint": "checkpoint-9915",
+      "train_log": "real_image_process/FPK_PJ_fullflow/train/qwen3_5_9b_v4/logs/train_20260525_143017_resume_from_checkpoint1500.log",
+      "notes": "Completed task1-task5 LoRA adapter trained from checkpoint-1500 resume."
+    }
+  }
+}

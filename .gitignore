@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Large local assets are intentionally not stored in Git.
+assets/models/*
+!assets/models/.gitkeep
+assets/adapters/*
+!assets/adapters/.gitkeep
+assets/datasets/*
+!assets/datasets/.gitkeep
+
+# Generated run outputs.
+runs/*
+!runs/.gitkeep
+
+# Generated training artifacts.
+train/qwen3_5_9b_v4/logs/
+train/qwen3_5_9b_v4/dataset_json/*
+!train/qwen3_5_9b_v4/dataset_json/.gitkeep
+train/yolo_v4/runs/
+train/yolo_v4/yolo_dataset/*
+!train/yolo_v4/yolo_dataset/.gitkeep
+
+# Scratch outputs.
+tmp/
+compare/

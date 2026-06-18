@@ -1,0 +1,17 @@
+{
+  "source_dataset_root": "real_image_process/dataset/dataset_full_v3",
+  "asset_dataset_root": "real_image_process/FPK_PJ_fullflow/assets/datasets/dataset_full_v3",
+  "source_model_path": "models/Qwen3-VL-8B-Instruct",
+  "asset_model_path": "real_image_process/FPK_PJ_fullflow/assets/models/Qwen3-VL-8B-Instruct",
+  "source_adapter_path": "saves/qwen3-vl-8b-instruct/lora/real-task12345-sft-split-20260516-v3-px2400-cutoff8192",
+  "asset_adapter_path": "real_image_process/FPK_PJ_fullflow/assets/adapters/real-task12345-sft-split-20260516-v3-px2400-cutoff8192",
+  "eval_dataset_dir": "real_image_process/dataset/dataset_json/splits/real_v3_seed42/val",
+  "known_issues_source": "real_image_process/package_graph/review_known_data_issues.jsonl",
+  "known_issues_path": "real_image_process/FPK_PJ_fullflow/manifests/known_data_issues.jsonl",
+  "table_review_log_source": "real_image_process/package_graph/table_lookup_review_log.jsonl",
+  "table_review_log_path": "real_image_process/FPK_PJ_fullflow/manifests/table_lookup_review_log.jsonl",
+  "include_views": ["top", "bottom", "land"],
+  "predict_views": ["bottom", "land", "land_detail", "front", "side", "lead"],
+  "exclude_value_sources": ["table_lookup_missing"]
+}
+

@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0.0",
+  "geometry_relations": {
+    "-1,-1": "vertical_length",
+    "-2,-2": "horizontal_length",
+    "-7,-7": "lead_thickness",
+    "-10,-10": "diameter",
+    "-11,-11": "corner_radius_or_notch",
+    "-12,-12": "groove_size",
+    "-13,-13": "parts_size",
+    "-15,-15": "noise"
+  },
+  "position_relations": {
+    "-3": "top",
+    "-4": "left",
+    "-5": "bottom",
+    "-6": "right",
+    "-8": "vertical_centerline",
+    "-9": "horizontal_centerline"
+  },
+  "notes": {
+    "object_pair": "[x, x] means one object; [x, y] means a relation between two objects.",
+    "relation_pair": "Negative codes describe geometry type or relative anchor positions."
+  }
+}

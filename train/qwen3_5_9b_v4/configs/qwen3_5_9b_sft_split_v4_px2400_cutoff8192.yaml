@@ -1,0 +1,55 @@
+### model
+model_name_or_path: /home/114/pohua1010/workspace/FPK_pj/models/Qwen3.5-9B
+image_max_pixels: 5760000
+video_max_pixels: 16384
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+
+### dataset
+dataset_dir: /home/114/pohua1010/workspace/FPK_pj/real_image_process/FPK_PJ_fullflow/assets/datasets/dataset_json/splits/real_v4_seed42
+dataset: real_v4_seed42_train_task1_view_classification,real_v4_seed42_train_task2_num_group_recognition,real_v4_seed42_train_task3_dim_type,real_v4_seed42_train_task4_dim_target,real_v4_seed42_train_task5_dim_start_anchor
+eval_dataset: real_v4_seed42_val_task1_view_classification,real_v4_seed42_val_task2_num_group_recognition,real_v4_seed42_val_task3_dim_type,real_v4_seed42_val_task4_dim_target,real_v4_seed42_val_task5_dim_start_anchor
+template: qwen3_5_nothink
+cutoff_len: 8192
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+val_size: 0.0
+
+### output
+output_dir: saves/qwen3.5-9b/lora/real-task12345-sft-split-20260524-v4-px2400-cutoff8192
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: false
+save_only_model: false
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+seed: 42
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### eval
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 200
+
+### notes
+# Qwen3.5-9B is registered in this local LlamaFactory as a multimodal model with
+# template `qwen3_5` and multimodal plugin `qwen3_vl`.
+# We use `qwen3_5_nothink` here because the current tasks are short, structured
+# outputs and we do not want to train on visible thinking traces.

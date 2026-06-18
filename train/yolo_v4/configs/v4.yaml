@@ -1,0 +1,26 @@
+dataset:
+  input_root: /home/114/pohua1010/workspace/FPK_pj/real_image_process/FPK_PJ_fullflow/assets/datasets/dataset_full_v4
+  output_root: /home/114/pohua1010/workspace/FPK_pj/real_image_process/FPK_PJ_fullflow/assets/datasets/yolo/v4_seed42
+  dataset_yaml: /home/114/pohua1010/workspace/FPK_pj/real_image_process/FPK_PJ_fullflow/assets/datasets/yolo/v4_seed42/dataset.yaml
+  val_ratio: 0.05
+  seed: 42
+  copy_images: false
+
+model:
+  base: /home/114/pohua1010/workspace/FPK_pj/real_image_process/FPK_PJ_fullflow/assets/models/yolo/base/best.pt
+  export_dir: /home/114/pohua1010/workspace/FPK_pj/real_image_process/FPK_PJ_fullflow/assets/models/yolo/v4
+
+train:
+  epochs: 100
+  imgsz: 1280
+  batch: 8
+  device: "0"
+  workers: 8
+  project: /home/114/pohua1010/workspace/FPK_pj/real_image_process/FPK_PJ_fullflow/train/yolo_v4/runs
+  name_prefix: v4_detector
+  patience: 50
+
+eval:
+  conf: 0.25
+  iou: 0.5
+  split: val
