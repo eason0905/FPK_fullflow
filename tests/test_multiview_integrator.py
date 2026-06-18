@@ -300,6 +300,51 @@ class MultiviewIntegratorTests(unittest.TestCase):
         self.assertEqual({pad["lead_contact_length_source"]["text"] for pad in lead_pads.values()}, {"L"})
         self.assertEqual({pad["lead_contact_length_source"]["dimension_id"] for pad in lead_pads.values()}, {20})
 
+    def test_lateral_dual_unit_dimension_uses_inch_value_when_metric_is_first(self) -> None:
+        bottom = toy_graph("PART", "bottom", pad_count=0, outline=True, spacing_value=None)
+        bottom["objects"] = [
+            {"id": 100, "label": "outline", "source_label": "outline", "bbox_reconstructed": [0.0, 0.0, 10.0, 10.0]},
+            rect_pad_object(1, [4.0, 0.0, 6.0, 0.2]),
+            rect_pad_object(2, [7.0, 0.0, 9.0, 0.2]),
+            rect_pad_object(3, [4.0, 9.8, 6.0, 10.0]),
+            rect_pad_object(4, [7.0, 9.8, 9.0, 10.0]),
+        ]
+        bottom["metrics"] = {"axis_scale_x": 1.0, "axis_scale_y": 1.0}
+        side = toy_graph("PART", "side", pad_count=0, outline=False, spacing_value=None)
+        side["objects"] = [
+            {"id": 20, "label": "rect", "source_label": "lead", "bbox_reconstructed": [0.0, 0.0, 2.0, 1.0]}
+        ]
+        side["dimensions"] = [
+            {
+                "id": 30,
+                "dimension_id": 30,
+                "text": "24X1.143 .045",
+                "kind": "size",
+                "axis": "x",
+                "target_ids": [20],
+                "anchors": ["left_edge", "right_edge"],
+                "value": 1.143,
+                "status": "accepted",
+                "value_source": "text_parser",
+            }
+        ]
+
+        canonical = integrate_part("PART", [bottom, side], MultiviewOptions())
+        lead_pads = {pad["source_package_pad_id"]: pad for pad in canonical["lead_pads"]}
+
+        self.assertEqual(len(lead_pads), 4)
+        self.assert_bbox_close(lead_pads[1]["bbox"], [4.0, 0.0, 6.0, 0.045])
+        self.assert_bbox_close(lead_pads[3]["bbox"], [4.0, 9.955, 6.0, 10.0])
+        self.assertEqual({pad["lead_contact_length"] for pad in lead_pads.values()}, {0.045})
+        self.assertEqual(
+            {pad["lead_contact_length_source"]["value_unit_correction"] for pad in lead_pads.values()},
+            {"dual_unit_reversed_inch_mm"},
+        )
+        self.assertEqual(
+            {pad["lead_contact_length_source"]["value_unit_correction_original_value"] for pad in lead_pads.values()},
+            {1.143},
+        )
+
     def test_front_pad_width_projects_to_tangential_axis_for_side_pads(self) -> None:
         bottom = toy_graph("PART", "bottom", pad_count=0, outline=True, spacing_value=None)
         bottom["objects"] = [

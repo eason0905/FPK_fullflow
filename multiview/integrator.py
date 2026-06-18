@@ -4,6 +4,7 @@ import json
 import math
 import base64
 import mimetypes
+import re
 import struct
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -2143,9 +2144,9 @@ def lead_partial_dimensions(dimensions: list[dict[str, Any]]) -> list[dict[str, 
         semantics = lead_partial_dimension_semantics(dim)
         if semantics not in {"lead_ground_contact_length", "pad_width", "lead_pad_length"}:
             continue
-        if not lead_partial_dimension_is_usable(dim):
+        enriched = corrected_lateral_dual_unit_dimension(dim)
+        if not lead_partial_dimension_is_usable(enriched):
             continue
-        enriched = dict(dim)
         enriched["overlay_semantics"] = semantics
         candidates.append(enriched)
     candidates = prefer_lead_contact_dimensions(candidates)
@@ -2179,6 +2180,63 @@ def prefer_lead_contact_dimensions(dimensions: list[dict[str, Any]]) -> list[dic
             continue
         kept.append(dim)
     return kept
+
+
+def corrected_lateral_dual_unit_dimension(dim: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy with inch value selected for reversed inch/mm lateral text.
+
+    Coordinate/unit convention: multiview geometry currently uses the inch-like
+    value from dual-unit dimension text.  Some OCR strings put the millimeter
+    value first, e.g. ``24X1.143 .045``.  This helper is intentionally scoped to
+    lateral/lead-detail partial evidence and only rewrites when two positive
+    numeric tokens form an inch/mm ratio close to 25.4 and the current value is
+    the larger token.
+    """
+    current = numeric(dim.get("value"))
+    if current is None or current <= 0:
+        return dict(dim)
+    text = str(dim.get("text") or "")
+    tokens = dimension_numeric_tokens_without_repeat_counts(text)
+    if len(tokens) < 2:
+        return dict(dim)
+    best_pair = None
+    for first_index, first in enumerate(tokens):
+        for second in tokens[first_index + 1 :]:
+            small = min(first, second)
+            large = max(first, second)
+            if small <= 0:
+                continue
+            ratio = large / small
+            if 20.0 <= ratio <= 30.0:
+                best_pair = (small, large, ratio)
+                break
+        if best_pair is not None:
+            break
+    if best_pair is None:
+        return dict(dim)
+    small, large, ratio = best_pair
+    if not math.isclose(current, large, rel_tol=1e-3, abs_tol=1e-6):
+        return dict(dim)
+    corrected = dict(dim)
+    corrected["value"] = small
+    corrected["value_midpoint"] = small
+    corrected["value_unit_correction"] = "dual_unit_reversed_inch_mm"
+    corrected["value_unit_correction_original_value"] = current
+    corrected["value_unit_correction_ratio"] = ratio
+    return corrected
+
+
+def dimension_numeric_tokens_without_repeat_counts(text: str) -> list[float]:
+    text_without_counts = re.sub(r"(?i)(?<![A-Za-z])\d+\s*x", " ", text)
+    tokens = []
+    for match in re.finditer(r"(?<![A-Za-z])[-+]?(?:\d+\.\d+|\.\d+|\d+)", text_without_counts):
+        try:
+            value = float(match.group(0))
+        except ValueError:
+            continue
+        if value > 0:
+            tokens.append(value)
+    return tokens
 
 
 def is_center_edge_lead_dimension(dim: dict[str, Any]) -> bool:
@@ -2588,7 +2646,7 @@ def terminal_package_pads_for_lead_synthesis(package_pads: list[dict[str, Any]])
 
 
 def lead_contact_dimension_ref(dim: dict[str, Any]) -> dict[str, Any]:
-    return {
+    ref = {
         "id": dim.get("id"),
         "dimension_id": dim.get("dimension_id"),
         "text": dim.get("text"),
@@ -2598,6 +2656,14 @@ def lead_contact_dimension_ref(dim: dict[str, Any]) -> dict[str, Any]:
         "source_graph": dim.get("source_graph"),
         "annotation_path": dim.get("annotation_path"),
     }
+    for key in (
+        "value_unit_correction",
+        "value_unit_correction_original_value",
+        "value_unit_correction_ratio",
+    ):
+        if key in dim:
+            ref[key] = dim.get(key)
+    return ref
 
 
 def union_object_bbox(objects: list[dict[str, Any]]) -> tuple[float, float, float, float] | None:
