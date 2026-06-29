@@ -8,6 +8,7 @@ from pathlib import Path
 from real_image_process.FPK_PJ_fullflow.multiview.integrator import (
     MultiviewOptions,
     best_multiview_layer_rotation,
+    build_multiview_overlay_payload,
     risk_reasons_for_part,
     score_part,
     integrate_graphs,
@@ -202,6 +203,62 @@ class MultiviewIntegratorTests(unittest.TestCase):
         self.assertEqual(lead_extra[1]["bbox"], [-5.0, -1.0, -4.5, 1.0])
         self.assertEqual(lead_extra[1]["coordinate_mode"], "dimension_scaled_centered")
         self.assertEqual(lead_extra[1]["source_bbox"], [0.0, 4.0, 0.5, 6.0])
+
+    def test_multiview_overlay_shared_lattice_aligns_bottom_and_land_centers(self) -> None:
+        bottom = overlay_grid_graph(
+            "PART",
+            "bottom",
+            graph_path="/tmp/PART/bottom.package_graph.json",
+            centers=grid_centers(step=100.0, count=3),
+            pad_size=10.0,
+            axis_scale=0.01,
+        )
+        land = overlay_grid_graph(
+            "PART",
+            "land",
+            graph_path="/tmp/PART/land.package_graph.json",
+            centers=grid_centers(step=60.0, count=3),
+            pad_size=12.0,
+            axis_scale=0.015,
+        )
+
+        overlay = build_multiview_overlay_payload([bottom, land], [], [], MultiviewOptions())
+
+        self.assertEqual(overlay["shared_lattice_normalization"]["status"], "ok")
+        bottom_layer = next(layer for layer in overlay["layers"] if layer["raw_view"] == "bottom")
+        land_layer = next(layer for layer in overlay["layers"] if layer["raw_view"] == "land")
+        bottom_centers = sorted(overlay_centers(bottom_layer, "package_pad"))
+        land_centers = sorted(overlay_centers(land_layer, "land_pad"))
+        self.assertEqual(bottom_centers, land_centers)
+        land_width = land_layer["objects"][0]["bbox"][2] - land_layer["objects"][0]["bbox"][0]
+        self.assertAlmostEqual(land_width, 0.18)
+        self.assertEqual(land_layer["objects"][0]["shared_lattice_normalization_type"], "shared_repeated_pad_lattice_center_normalization")
+
+    def test_multiview_overlay_shared_lattice_skips_count_mismatch(self) -> None:
+        bottom = overlay_grid_graph(
+            "PART",
+            "bottom",
+            graph_path="/tmp/PART/bottom.package_graph.json",
+            centers=grid_centers(step=100.0, count=3),
+            pad_size=10.0,
+            axis_scale=0.01,
+        )
+        land = overlay_grid_graph(
+            "PART",
+            "land",
+            graph_path="/tmp/PART/land.package_graph.json",
+            centers=grid_centers(step=60.0, count=3)[:-1],
+            pad_size=12.0,
+            axis_scale=0.015,
+        )
+
+        overlay = build_multiview_overlay_payload([bottom, land], [], [], MultiviewOptions())
+
+        self.assertEqual(overlay["shared_lattice_normalization"]["status"], "skipped")
+        adjustment = overlay["shared_lattice_normalization"]["layer_adjustments"][0]
+        self.assertEqual(adjustment["skip_reason"], "pad_count_mismatch")
+        land_layer = next(layer for layer in overlay["layers"] if layer["raw_view"] == "land")
+        self.assertNotIn("shared_lattice_normalization_type", land_layer["objects"][0])
 
     def test_lead_edge_to_center_contact_dimension_preferred_over_full_lead_span(self) -> None:
         bottom = toy_graph("PART", "bottom", pad_count=0, outline=True, spacing_value=None)
@@ -1857,6 +1914,48 @@ def toy_graph(
         "objects": objects,
         "dimensions": dimensions,
     }
+
+
+def overlay_grid_graph(
+    part_number: str,
+    view: str,
+    *,
+    graph_path: str,
+    centers: list[tuple[float, float]],
+    pad_size: float,
+    axis_scale: float,
+) -> dict:
+    half = pad_size / 2.0
+    objects = [
+        circle_object(index, [cx - half, cy - half, cx + half, cy + half])
+        for index, (cx, cy) in enumerate(centers, start=1)
+    ]
+    return {
+        "part_number": part_number,
+        "_part_number": part_number,
+        "view": view,
+        "_raw_view": view,
+        "_graph_path": graph_path,
+        "annotation_path": f"/tmp/{part_number}/{view}.json",
+        "image": {"path": f"/tmp/{part_number}/{view}.png"},
+        "metrics": {"axis_scale_x": axis_scale, "axis_scale_y": axis_scale},
+        "objects": objects,
+        "dimensions": [],
+    }
+
+
+def grid_centers(*, step: float, count: int) -> list[tuple[float, float]]:
+    return [(col * step, row * step) for row in range(count) for col in range(count)]
+
+
+def overlay_centers(layer: dict, role: str) -> list[tuple[float, float]]:
+    centers = []
+    for obj in layer["objects"]:
+        if obj.get("role") != role:
+            continue
+        bbox = obj["bbox"]
+        centers.append((round((bbox[0] + bbox[2]) / 2.0, 9), round((bbox[1] + bbox[3]) / 2.0, 9)))
+    return centers
 
 
 def circle_object(object_id: int, bbox: list[float]) -> dict:

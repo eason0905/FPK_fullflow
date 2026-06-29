@@ -1489,6 +1489,7 @@ def build_multiview_overlay_payload(
 
     source_views = {str(graph.get("_raw_view") or graph.get("view") or "").strip().lower() for graph in graphs}
     rotation_summary = normalize_multiview_overlay_layer_rotations(layers, extra_objects, source_views=source_views)
+    lattice_summary = normalize_multiview_overlay_shared_lattice(layers, extra_objects)
 
     frames = [
         tuple(layer["normalized_frame"])
@@ -1503,6 +1504,7 @@ def build_multiview_overlay_payload(
     return {
         "coordinate_mode": "dimension_scaled_centered",
         "rotation_normalization": rotation_summary,
+        "shared_lattice_normalization": lattice_summary,
         "layers": layers,
         "extra_objects": sorted(extra_objects, key=object_sort_key),
         "frame": normalized_bbox_list(union_bbox_values(frames)) if frames else [],
@@ -1613,6 +1615,440 @@ def normalize_multiview_overlay_layer_rotations(
         "layer_rotations": layer_rotations,
         "extra_object_rotations": extra_object_rotations,
     }
+
+
+def normalize_multiview_overlay_shared_lattice(
+    layers: list[dict[str, Any]],
+    extra_objects: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Align compatible repeated pad lattices before review display.
+
+    Coordinate system: input and output bboxes are dimension_scaled_centered
+    units. This normalization only changes object centers; pad sizes remain in
+    each source view's own accepted dimension units. A layer is adjusted only
+    for compatible area-array circular pad lattices with equal pad counts and
+    low-residual axis line mappings.
+    """
+    anchor = select_shared_lattice_anchor_layer(layers)
+    if anchor is None:
+        return {"status": "skipped", "skip_reason": "missing_package_lattice_anchor", "layer_adjustments": []}
+    anchor_items = layer_lattice_items(anchor)
+    if len(anchor_items) < 4:
+        return {"status": "skipped", "skip_reason": "insufficient_anchor_lattice_pads", "layer_adjustments": []}
+
+    candidate_layers = [
+        layer
+        for layer in layers
+        if layer is not anchor and shared_lattice_layer_candidate(layer)
+    ]
+    precheck_adjustments = []
+    for layer in candidate_layers:
+        adjustment = build_shared_lattice_layer_adjustment(anchor_items, layer_lattice_items(layer))
+        adjustment.update(
+            {
+                "raw_view": layer.get("raw_view"),
+                "canonical_view": layer.get("canonical_view"),
+                "graph_path": layer.get("graph_path"),
+            }
+        )
+        precheck_adjustments.append(adjustment)
+    if not any(adjustment.get("status") == "ok" for adjustment in precheck_adjustments):
+        return {
+            "status": "skipped",
+            "skip_reason": "no_compatible_lattice_layers",
+            "anchor_raw_view": anchor.get("raw_view"),
+            "anchor_graph_path": anchor.get("graph_path"),
+            "anchor_pad_count": len(anchor_items),
+            "anchor_snap": {},
+            "matched_layer_count": 0,
+            "layer_adjustments": precheck_adjustments,
+            "extra_adjustments": [],
+        }
+
+    anchor_snap = build_shared_lattice_layer_adjustment(anchor_items, anchor_items)
+    anchor_snap.update(
+        {
+            "raw_view": anchor.get("raw_view"),
+            "canonical_view": anchor.get("canonical_view"),
+            "graph_path": anchor.get("graph_path"),
+            "anchor_layer_snap": True,
+        }
+    )
+    if anchor_snap["status"] != "ok":
+        return {
+            "status": "skipped",
+            "skip_reason": "anchor_lattice_snap_failed",
+            "anchor_raw_view": anchor.get("raw_view"),
+            "anchor_graph_path": anchor.get("graph_path"),
+            "anchor_pad_count": len(anchor_items),
+            "anchor_snap": anchor_snap,
+            "matched_layer_count": 0,
+            "layer_adjustments": precheck_adjustments,
+            "extra_adjustments": [],
+        }
+    apply_shared_lattice_transform_to_layer(anchor, anchor_snap)
+    apply_shared_lattice_transform_to_extra_objects(
+        extra_objects,
+        source_graph=str(anchor.get("graph_path") or ""),
+        adjustment=anchor_snap,
+    )
+    anchor_items = layer_lattice_items(anchor)
+    layer_adjustments = []
+    extra_adjustments = []
+    for layer in candidate_layers:
+        moving_items = layer_lattice_items(layer)
+        adjustment = build_shared_lattice_layer_adjustment(anchor_items, moving_items)
+        adjustment.update(
+            {
+                "raw_view": layer.get("raw_view"),
+                "canonical_view": layer.get("canonical_view"),
+                "graph_path": layer.get("graph_path"),
+            }
+        )
+        if adjustment["status"] != "ok":
+            layer_adjustments.append(adjustment)
+            continue
+        apply_shared_lattice_transform_to_layer(layer, adjustment)
+        adjusted_extra_count = apply_shared_lattice_transform_to_extra_objects(
+            extra_objects,
+            source_graph=str(layer.get("graph_path") or ""),
+            adjustment=adjustment,
+        )
+        adjustment["adjusted_extra_object_count"] = adjusted_extra_count
+        extra_adjustments.append({"graph_path": layer.get("graph_path"), "adjusted_extra_object_count": adjusted_extra_count})
+        layer_adjustments.append(adjustment)
+
+    matched_count = sum(1 for item in layer_adjustments if item.get("status") == "ok")
+    return {
+        "status": "ok" if matched_count else "skipped",
+        "skip_reason": "" if matched_count else "no_compatible_lattice_layers",
+        "anchor_raw_view": anchor.get("raw_view"),
+        "anchor_graph_path": anchor.get("graph_path"),
+        "anchor_pad_count": len(anchor_items),
+        "anchor_snap": anchor_snap,
+        "matched_layer_count": matched_count,
+        "layer_adjustments": layer_adjustments,
+        "extra_adjustments": extra_adjustments,
+    }
+
+
+def select_shared_lattice_anchor_layer(layers: list[dict[str, Any]]) -> dict[str, Any] | None:
+    scored = []
+    for index, layer in enumerate(layers):
+        raw_view = str(layer.get("raw_view") or "").lower()
+        if raw_view != "bottom":
+            continue
+        items = layer_lattice_items(layer)
+        if len(items) < 4:
+            continue
+        scored.append((-len(items), index, layer))
+    if not scored:
+        return None
+    return sorted(scored, key=lambda item: item[:2])[0][2]
+
+
+def shared_lattice_layer_candidate(layer: dict[str, Any]) -> bool:
+    raw_view = str(layer.get("raw_view") or "").lower()
+    return raw_view == "land"
+
+
+def layer_lattice_items(layer: dict[str, Any]) -> list[dict[str, Any]]:
+    roles = {"land_pad"} if str(layer.get("raw_view") or "").lower() == "land" else {"package_pad"}
+    items = []
+    for index, obj in enumerate(layer.get("objects") or []):
+        if str(obj.get("role") or "") not in roles:
+            continue
+        bbox = normalized_bbox(obj)
+        if bbox is None:
+            continue
+        items.append({"index": index, "object": obj, "bbox": list(bbox)})
+    return items
+
+
+def build_shared_lattice_layer_adjustment(
+    anchor_items: list[dict[str, Any]],
+    moving_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if len(anchor_items) != len(moving_items):
+        return shared_lattice_skip("pad_count_mismatch", anchor_items, moving_items)
+    if len(anchor_items) < 4:
+        return shared_lattice_skip("insufficient_pad_count", anchor_items, moving_items)
+    anchor_pitch = median_nearest_neighbor_distance_from_boxes([item["bbox"] for item in anchor_items])
+    moving_pitch = median_nearest_neighbor_distance_from_boxes([item["bbox"] for item in moving_items])
+    if anchor_pitch <= 1e-9 or moving_pitch <= 1e-9:
+        return shared_lattice_skip("missing_lattice_pitch", anchor_items, moving_items)
+    lattice_reason = shared_area_array_lattice_skip_reason(anchor_items, moving_items, anchor_pitch, moving_pitch)
+    if lattice_reason:
+        return shared_lattice_skip(lattice_reason, anchor_items, moving_items)
+    x_transform = center_line_axis_transform(
+        moving_items,
+        anchor_items,
+        axis=0,
+        moving_pitch=moving_pitch,
+        anchor_pitch=anchor_pitch,
+    )
+    y_transform = center_line_axis_transform(
+        moving_items,
+        anchor_items,
+        axis=1,
+        moving_pitch=moving_pitch,
+        anchor_pitch=anchor_pitch,
+    )
+    if x_transform is None or y_transform is None:
+        return shared_lattice_skip("axis_transform_failed", anchor_items, moving_items)
+    max_residual = max(x_transform["max_residual"], y_transform["max_residual"])
+    rms_residual = math.hypot(x_transform["rms_residual"], y_transform["rms_residual"])
+    tolerance = anchor_pitch * 0.12
+    if max_residual > tolerance:
+        result = shared_lattice_skip("axis_residual_too_large", anchor_items, moving_items)
+        result.update(
+            {
+                "anchor_pitch": clean_float(anchor_pitch),
+                "moving_pitch": clean_float(moving_pitch),
+                "max_axis_residual": clean_float(max_residual),
+                "rms_axis_residual": clean_float(rms_residual),
+                "residual_tolerance": clean_float(tolerance),
+            }
+        )
+        return result
+    return {
+        "status": "ok",
+        "skip_reason": "",
+        "anchor_pad_count": len(anchor_items),
+        "moving_pad_count": len(moving_items),
+        "anchor_pitch": clean_float(anchor_pitch),
+        "moving_pitch": clean_float(moving_pitch),
+        "residual_tolerance": clean_float(tolerance),
+        "max_axis_residual": clean_float(max_residual),
+        "rms_axis_residual": clean_float(rms_residual),
+        "x_scale": clean_float(x_transform["scale"]),
+        "x_offset": clean_float(x_transform["offset"]),
+        "x_moving_lines": [clean_float(value) for value in x_transform["moving_lines"]],
+        "x_anchor_lines": [clean_float(value) for value in x_transform["anchor_lines"]],
+        "y_scale": clean_float(y_transform["scale"]),
+        "y_offset": clean_float(y_transform["offset"]),
+        "y_moving_lines": [clean_float(value) for value in y_transform["moving_lines"]],
+        "y_anchor_lines": [clean_float(value) for value in y_transform["anchor_lines"]],
+        "adjustment_type": "shared_repeated_pad_lattice_center_normalization",
+    }
+
+
+def shared_area_array_lattice_skip_reason(
+    anchor_items: list[dict[str, Any]],
+    moving_items: list[dict[str, Any]],
+    anchor_pitch: float,
+    moving_pitch: float,
+) -> str:
+    if len(anchor_items) < 9 or len(moving_items) < 9:
+        return "not_dense_area_array_lattice"
+    if circle_pad_ratio(anchor_items) < 0.8 or circle_pad_ratio(moving_items) < 0.8:
+        return "not_circular_area_array_lattice"
+    for axis in (0, 1):
+        anchor_line_count = len(center_axis_clusters(anchor_items, axis=axis, pitch=anchor_pitch))
+        moving_line_count = len(center_axis_clusters(moving_items, axis=axis, pitch=moving_pitch))
+        if anchor_line_count < 3 or moving_line_count < 3:
+            return "insufficient_area_array_axis_lines"
+    return ""
+
+
+def circle_pad_ratio(items: list[dict[str, Any]]) -> float:
+    if not items:
+        return 0.0
+    circle_count = sum(1 for item in items if pad_shape_family(item["object"]) == "circle")
+    return circle_count / len(items)
+
+
+def shared_lattice_skip(
+    reason: str,
+    anchor_items: list[dict[str, Any]],
+    moving_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "status": "skipped",
+        "skip_reason": reason,
+        "anchor_pad_count": len(anchor_items),
+        "moving_pad_count": len(moving_items),
+    }
+
+
+def center_line_axis_transform(
+    moving_items: list[dict[str, Any]],
+    anchor_items: list[dict[str, Any]],
+    *,
+    axis: int,
+    moving_pitch: float,
+    anchor_pitch: float,
+) -> dict[str, float] | None:
+    moving_clusters = center_axis_clusters(moving_items, axis=axis, pitch=moving_pitch)
+    anchor_clusters = center_axis_clusters(anchor_items, axis=axis, pitch=anchor_pitch)
+    if len(moving_clusters) != len(anchor_clusters) or len(moving_clusters) < 2:
+        return None
+    moving_counts = [len(cluster) for cluster in moving_clusters]
+    anchor_counts = [len(cluster) for cluster in anchor_clusters]
+    if moving_counts != anchor_counts:
+        return None
+    moving_values = [sum(cluster) / len(cluster) for cluster in moving_clusters]
+    anchor_values = [sum(cluster) / len(cluster) for cluster in anchor_clusters]
+    moving_mean = sum(moving_values) / len(moving_values)
+    anchor_mean = sum(anchor_values) / len(anchor_values)
+    moving_var = sum((value - moving_mean) ** 2 for value in moving_values)
+    if moving_var <= 1e-12:
+        return None
+    covariance = sum(
+        (moving - moving_mean) * (anchor - anchor_mean)
+        for moving, anchor in zip(moving_values, anchor_values)
+    )
+    scale = covariance / moving_var
+    if not math.isfinite(scale) or scale <= 0.0:
+        return None
+    offset = anchor_mean - scale * moving_mean
+    residuals = [abs(scale * moving + offset - anchor) for moving, anchor in zip(moving_values, anchor_values)]
+    return {
+        "scale": scale,
+        "offset": offset,
+        "max_residual": max(residuals),
+        "rms_residual": math.sqrt(sum(value * value for value in residuals) / len(residuals)),
+        "moving_lines": moving_values,
+        "anchor_lines": anchor_values,
+    }
+
+
+def center_axis_clusters(
+    items: list[dict[str, Any]],
+    *,
+    axis: int,
+    pitch: float,
+) -> list[list[float]]:
+    values = sorted(bbox_tuple_center(tuple(item["bbox"]))[axis] for item in items)
+    if not values:
+        return []
+    split_threshold = max(pitch * 0.45, 1e-9)
+    clusters: list[list[float]] = [[values[0]]]
+    for value in values[1:]:
+        if value - clusters[-1][-1] > split_threshold:
+            clusters.append([value])
+        else:
+            clusters[-1].append(value)
+    return clusters
+
+
+def apply_shared_lattice_transform_to_layer(layer: dict[str, Any], adjustment: dict[str, Any]) -> None:
+    for obj in layer.get("objects") or []:
+        if not shared_lattice_transformable_role(str(obj.get("role") or "")):
+            continue
+        bbox = normalized_bbox(obj)
+        if bbox is None:
+            continue
+        obj["bbox_before_shared_lattice_normalization"] = normalized_bbox_list(bbox)
+        obj["bbox"] = transform_bbox_center_keep_size(bbox, adjustment)
+        obj["bbox_after_shared_lattice_normalization"] = list(obj["bbox"])
+        obj["shared_lattice_normalization_type"] = adjustment["adjustment_type"]
+    refresh_multiview_overlay_layer_frame(layer)
+
+
+def apply_shared_lattice_transform_to_extra_objects(
+    extra_objects: list[dict[str, Any]],
+    *,
+    source_graph: str,
+    adjustment: dict[str, Any],
+) -> int:
+    count = 0
+    for obj in extra_objects:
+        if str(obj.get("source_graph") or "") != source_graph:
+            continue
+        if not shared_lattice_transformable_role(str(obj.get("role") or "")):
+            continue
+        bbox = normalized_bbox(obj)
+        if bbox is None:
+            continue
+        obj["bbox_before_shared_lattice_normalization"] = normalized_bbox_list(bbox)
+        obj["bbox"] = transform_bbox_center_keep_size(bbox, adjustment)
+        obj["bbox_after_shared_lattice_normalization"] = list(obj["bbox"])
+        obj["shared_lattice_normalization_type"] = adjustment["adjustment_type"]
+        count += 1
+    return count
+
+
+def shared_lattice_transformable_role(role: str) -> bool:
+    return role in {"package_pad", "land_pad", "lead_pad", "partial_pad_width", "partial_lead_pad_length", "inner_land_pad"}
+
+
+def transform_bbox_center_keep_size(
+    bbox: tuple[float, float, float, float],
+    adjustment: dict[str, Any],
+) -> list[float]:
+    cx, cy = bbox_tuple_center(bbox)
+    width = bbox[2] - bbox[0]
+    height = bbox[3] - bbox[1]
+    next_cx = mapped_lattice_axis_center(
+        cx,
+        moving_lines=[float(value) for value in adjustment.get("x_moving_lines") or []],
+        anchor_lines=[float(value) for value in adjustment.get("x_anchor_lines") or []],
+        scale=float(adjustment["x_scale"]),
+        offset=float(adjustment["x_offset"]),
+    )
+    next_cy = mapped_lattice_axis_center(
+        cy,
+        moving_lines=[float(value) for value in adjustment.get("y_moving_lines") or []],
+        anchor_lines=[float(value) for value in adjustment.get("y_anchor_lines") or []],
+        scale=float(adjustment["y_scale"]),
+        offset=float(adjustment["y_offset"]),
+    )
+    return normalized_bbox_list(
+        [
+            next_cx - width / 2.0,
+            next_cy - height / 2.0,
+            next_cx + width / 2.0,
+            next_cy + height / 2.0,
+        ]
+    )
+
+
+def mapped_lattice_axis_center(
+    value: float,
+    *,
+    moving_lines: list[float],
+    anchor_lines: list[float],
+    scale: float,
+    offset: float,
+) -> float:
+    if moving_lines and len(moving_lines) == len(anchor_lines):
+        nearest_index = min(range(len(moving_lines)), key=lambda index: abs(value - moving_lines[index]))
+        return anchor_lines[nearest_index]
+    return scale * value + offset
+
+
+def refresh_multiview_overlay_layer_frame(layer: dict[str, Any]) -> None:
+    boxes = [
+        tuple(obj["bbox"])
+        for obj in layer.get("objects") or []
+        if len(obj.get("bbox") or []) >= 4
+    ]
+    if boxes:
+        layer["normalized_frame"] = normalized_bbox_list(union_bbox_values(boxes))
+
+
+def median_nearest_neighbor_distance_from_boxes(boxes: list[list[float]]) -> float:
+    centers = [bbox_tuple_center(tuple(box)) for box in boxes if len(box) >= 4]
+    distances = []
+    for index, center in enumerate(centers):
+        neighbor_distances = [
+            math.hypot(center[0] - other[0], center[1] - other[1])
+            for other_index, other in enumerate(centers)
+            if other_index != index
+        ]
+        if neighbor_distances:
+            distances.append(min(neighbor_distances))
+    return median_sorted(sorted(distances)) if distances else 0.0
+
+
+def bbox_tuple_center(bbox: tuple[float, float, float, float]) -> tuple[float, float]:
+    return ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
+
+
+def clean_float(value: float) -> float:
+    rounded = round(float(value), 12)
+    return 0.0 if rounded == -0.0 else rounded
 
 
 def is_top_package_rotation_anchor(layer: dict[str, Any]) -> bool:
